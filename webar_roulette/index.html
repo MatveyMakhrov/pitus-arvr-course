@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>WebAR Lottery Roulette</title>
+
+<!-- A-Frame -->
+<script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+<!-- AR.js -->
+<script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.js"></script>
+
+<style>
+    body { 
+        margin:0; 
+        overflow:hidden; 
+        font-family:sans-serif; 
+    }
+    #hint { 
+        position: fixed; 
+        top: 20px; 
+        width: 100%; 
+        text-align:center; 
+        color:white; 
+        font-size:16px; 
+        text-shadow:0 0 6px black; 
+        z-index:10; 
+        background-color: rgba(0,0,0,0.5);
+        padding: 10px;
+        box-sizing: border-box;
+    }
+    #result { 
+        position: fixed; 
+        bottom: 60px; 
+        width: 100%; 
+        text-align:center; 
+        color: gold; 
+        font-size: 28px; 
+        font-weight: bold; 
+        text-shadow: 0 0 8px black; 
+        z-index:10; 
+        background-color: rgba(0,0,0,0.7);
+        padding: 10px;
+        box-sizing: border-box;
+    }
+    #stats {
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        background-color: rgba(0,0,0,0.7);
+        color: white;
+        padding: 10px;
+        border-radius: 10px;
+        font-size: 14px;
+        z-index: 10;
+    }
+    #spin-button {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: linear-gradient(45deg, #FFD700, #FFA500);
+        color: black;
+        border: none;
+        padding: 15px 30px;
+        font-size: 18px;
+        font-weight: bold;
+        border-radius: 25px;
+        cursor: pointer;
+        z-index: 10;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        transition: all 0.3s;
+    }
+    #spin-button:hover {
+        transform: translateX(-50%) scale(1.05);
+        box-shadow: 0 6px 15px rgba(0,0,0,0.4);
+    }
+    #spin-button:disabled {
+        background: linear-gradient(45deg, #666, #999);
+        color: #ccc;
+        cursor: not-allowed;
+        transform: translateX(-50%);
+    }
+    .history-item {
+        margin: 5px 0;
+        padding: 5px;
+        border-radius: 5px;
+    }
+    .red { background-color: rgba(198, 40, 40, 0.3); }
+    .black { background-color: rgba(0, 0, 0, 0.3); }
+    .green { background-color: rgba(46, 125, 50, 0.3); }
+</style>
+</head>
+<body>
+
+<div id="hint">Наведите камеру на маркер HIRO. Нажмите кнопку, чтобы крутить рулетку</div>
+<div id="result">Готово к вращению</div>
+<div id="stats">
+    <div>Количество вращений: <span id="spin-count">0</span></div>
+    <div>Последние результаты:</div>
+    <div id="history"></div>
+</div>
+<button id="spin-button" onclick="spin()">Крутить рулетку</button>
+
+<a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;" vr-mode-ui="enabled: false">
+
+    <a-marker preset="hiro">
+        <!-- Колесо рулетки -->
+        <a-entity id="wheel" position="0 0.15 0">
+            <a-cylinder radius="0.4" height="0.02" color="#111" position="0 0 0"></a-cylinder>
+            <a-entity id="sectors"></a-entity>
+        </a-entity>
+
+        <!-- Стрелка -->
+        <a-cone id="arrow" radius-bottom="0.03" radius-top="0" height="0.12" color="#FFD700" 
+                position="0 0.29 0" rotation="0 0 0"></a-cone>
+        
+        <!-- Основание -->
+        <a-cylinder radius="0.5" height="0.05" color="#333" position="0 -0.025 0"></a-cylinder>
+    </a-marker>
+
+    <a-entity camera></a-entity>
+</a-scene>
+
+<script>
+const numbers = [0,32,15,19,4,21,2,25,17,34,6,27,13,36,11,30,8,23,10,5,24,16,33,1,20,14,31,9,22,18,29,7,28,12,35,3,26];
+const sectorsEl = document.getElementById('sectors');
+const wheel = document.getElementById('wheel');
+const resultEl = document.getElementById('result');
+const spinButton = document.getElementById('spin-button');
+const spinCountEl = document.getElementById('spin-count');
+const historyEl = document.getElementById('history');
+const SECTORS = numbers.length;
+const sectorAngle = 360 / SECTORS;
+const radius = 0.4;
+
+// Статистика
+let spinCount = 0;
+let spinHistory = [];
+const MAX_HISTORY = 5;
+
+// Цвета рулетки (европейская последовательность)
+function getColor(num){
+    if(num === 0) return '#2E7D32'; // зеленый
+    // Красные числа
+    const reds = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36];
+    return reds.includes(num) ? '#C62828' : '#000000'; // красный или черный
+}
+
+// Создаем сектора и числа
+numbers.forEach((num, i) => {
+    const angle = i * sectorAngle;
+    const rad = THREE.MathUtils.degToRad(angle);
+    
+    // Сектор
+    const sector = document.createElement('a-cylinder-25');
+    sector.setAttribute('radius', radius);
+    sector.setAttribute('height', 0.01);
+    sector.setAttribute('theta-start', angle);
+    sector.setAttribute('theta-length', sectorAngle);
+    sector.setAttribute('color', getColor(num));
+    sector.setAttribute('position', '0 0.01 0');
+    sectorsEl.appendChild(sector);
+
+    // Число
+    const text = document.createElement('a-text');
+    text.setAttribute('value', num.toString());
+    text.setAttribute('align', 'center');
+    text.setAttribute('color', 'white');
+    text.setAttribute('width', 0.25);
+    text.setAttribute('baseline', 'center');
+    text.setAttribute('font', 'roboto');
+    
+    // Позиционируем число с учетом его длины
+    const textRadius = num > 9 ? 0.65 * radius : 0.7 * radius;
+    const tx = textRadius * Math.sin(rad);
+    const tz = -textRadius * Math.cos(rad);
+    
+    text.setAttribute('position', ${tx} 0.02 ${tz});
+    text.setAttribute('rotation', 0 ${-angle} 0);
+    sectorsEl.appendChild(text);
+});
+
+// Добавляем внешнее кольцо
+const outerRing = document.createElement('a-ring');
+outerRing.setAttribute('radius-inner', 0.41);
+outerRing.setAttribute('radius-outer', 0.45);
+outerRing.setAttribute('color', '#444');
+outerRing.setAttribute('position', '0 0.015 0');
+sectorsEl.appendChild(outerRing);
+
+let spinning = false;
+let currentRotation = 0;
+
+function spin(){
+    if(spinning) return;
+    
+    spinning = true;
+    spinButton.disabled = true;
+    resultEl.textContent = 'Вращение...';
+    resultEl.style.color = '#FFD700';
+    
+    // Случайная задержка перед началом вращения (эффект ожидания)
+    setTimeout(() => {
+        const spins = 5 + Math.random() * 4; // 5-9 полных оборотов
+        const targetAngle = currentRotation + spins * 360 + Math.random() * 360;
+        const duration = 3000 + Math.random() * 2000; // 3-5 секунд
+        
+        const startTime = performance.now();
+        const startRotation = currentRotation;
+        
+        function animate(time){
+            const elapsed = time - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            // Квадратичное замедление
+            const ease = 1 - Math.pow(1 - progress, 3);
+            
+            currentRotation = startRotation + (targetAngle - startRotation) * ease;
+            wheel.setAttribute('rotation', 0 ${currentRotation} 0);
+            
+            if(progress < 1){
+                requestAnimationFrame(animate);
+            } else {
+                finishSpin();
+            }
+        }
+        
+        requestAnimationFrame(animate);
+    }, 500);
+}
+
+function finishSpin(){
+    const normalizedRotation = ((currentRotation % 360) + 360) % 360;
+    const sectorIndex = Math.floor((360 - normalizedRotation) / sectorAngle) % SECTORS;
+    const winningNumber = numbers[sectorIndex];
+    const winningColor = getColor(winningNumber);
+    
+    // Обновляем статистику
+    spinCount++;
+    spinCountEl.textContent = spinCount;
+    
+    // Добавляем в историю
+    const colorClass = winningColor === '#2E7D32' ? 'green' : 
+                      winningColor === '#C62828' ? 'red' : 'black';
+    
+    const historyItem = document.createElement('div');
+    historyItem.className = history-item ${colorClass};
+    historyItem.textContent = winningNumber;
+    historyItem.style.color = winningColor === '#C62828' ? '#FFCCCB' : 
+                             winningColor === '#000000' ? 'white' : '#90EE90';
+    
+    spinHistory.unshift(historyItem);
+    
+    // Ограничиваем историю
+    if(spinHistory.length > MAX_HISTORY){
+        spinHistory.pop();
+    }
+    
+    // Обновляем отображение истории
+    historyEl.innerHTML = '';
+    spinHistory.forEach(item => {
+        historyEl.appendChild(item.cloneNode(true));
+    });
+    
+    // Показываем результат с анимацией
+    resultEl.textContent = Выпало: ${winningNumber};
+    resultEl.style.color = winningColor === '#C62828' ? '#FF4444' : 
+                          winningColor === '#000000' ? 'white' : '#4CAF50';
+    
+    // Подсветка выигравшего сектора
+    highlightWinningSector(sectorIndex);
+    
+    // Включаем кнопку через 2 секунды
+    setTimeout(() => {
+        spinning = false;
+        spinButton.disabled = false;
+        resultEl.textContent = Готово! Нажмите для следующего вращения;
+        resultEl.style.color = 'gold';
+    }, 2000);
+}
+
+function highlightWinningSector(index){
+    // Временное изменение цвета стрелки
+    const arrow = document.querySelector('#arrow');
+    const originalColor = arrow.getAttribute('color');
+    
+    // Мигание стрелки
+    let blinkCount = 0;
+    const blinkInterval = setInterval(() => {
+        if(blinkCount % 2 === 0){
+            arrow.setAttribute('color', '#FF0000');
+        } else {
+            arrow.setAttribute('color', originalColor);
+        }
+        blinkCount++;
+        
+        if(blinkCount >= 6){
+            clearInterval(blinkInterval);
+            arrow.setAttribute('color', originalColor);
+        }
+    }, 200);
+}
+
+// Также можно крутить по клику на экран
+window.addEventListener('click', (e) => {
+    if(e.target.id !== 'spin-button' && !spinning){
+        spin();
+    }
+});
+
+// Инструкция при загрузке
+window.onload = function() {
+    setTimeout(() => {
+        resultEl.textContent = 'Рулетка загружена. Нажмите кнопку для вращения!';
+    }, 1000);
+}
+</script>
+
+</body>
+</html>
